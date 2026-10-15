@@ -1,0 +1,16 @@
+{
+  "name": "netcore-relay",
+  "private": true,
+  "type": "module",
+  "description": "Relay for two-player online games: rooms with 4-letter codes, seat hold and rejoin. Cloudflare Worker + Durable Object (worker.js) or Node (node.js).",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node node.js --port 8790"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "wrangler": "4.142.0"
+  }
+}

@@ -1,0 +1,3 @@
+# LF everywhere, Windows checkouts too: games hash their data bytes for the online version check,
+# and the scripts and relay should read the same on every platform.
+* text=auto eol=lf
