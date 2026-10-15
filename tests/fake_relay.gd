@@ -8,6 +8,7 @@ var latency := 0
 var backlog := 0
 var host := {}    # {socket, token, away}
 var client := {}
+var urls: Array = []  # every URL a socket opened, in order
 
 
 func socket() -> FakeSocket:
@@ -24,6 +25,7 @@ func _send_text(s: FakeSocket, obj: Dictionary) -> void:
 
 
 func _open(s: FakeSocket, url: String) -> void:
+	urls.append(url)
 	var path := url.get_slice("://", 1)
 	path = path.substr(path.find("/"))
 	var route := path.get_slice("?", 0)
@@ -117,6 +119,13 @@ func _vacate(seat: Dictionary) -> void:
 			_send_text(client["socket"], {"type": "peer_left"})
 			client["socket"].closing = true
 		client = {}
+
+
+## The relay sends a side an error, as it does before closing a room (e.g. "limit").
+func send_error(side: String, reason: String) -> void:
+	var seat: Dictionary = host if side == "host" else client
+	if not seat.is_empty() and seat["socket"]:
+		_refuse(seat["socket"], reason)
 
 
 ## A side's connection drops with no leave (an app switch): the relay holds its seat.

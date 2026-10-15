@@ -7,6 +7,14 @@ rooms only pair the same game.
 ## Contents
 
 - **Godot addon** (this folder, added to a game at `game/addons/netcore`):
+  - `NetCoreSession`: host-authoritative play for two players over ENet (LAN) or the relay.
+    The host runs the only world; the client sends its inputs, predicts its own player and
+    restores the host's snapshots (keyframes, or XOR deltas against a snapshot it has
+    acknowledged). Holds the link through drops (waits up to two minutes), refuses clients
+    the game turns away, hosts a game already in progress (`host_relay_with`), and reports
+    reasons as codes for the game to word.
+  - `NetAdapter`: the game's side: its world, snapshot layout, slots, tuning and commands.
+  - `NetDigest`: helpers for the content digest both sides must share.
   - `RelayPeer`: Godot's multiplayer over a WebSocket to the relay. Seat tokens, rejoin after a
     dropped link, explicit leave.
   - `InputQueue`: the host's queue of the remote player's inputs (in order, catch-up, drain).
@@ -25,7 +33,24 @@ git submodule add https://github.com/thesquib/netcore.git game/addons/netcore
 git config -f .gitmodules submodule.game/addons/netcore.ignore untracked   # relay/node_modules
 ```
 
-Exclude `addons/netcore/tests/*` in the game's export presets.
+Exclude `addons/netcore/tests/*` in the game's export presets, and have the game's test runner
+also run `res://addons/netcore/tests/test_*.gd` (they extend the game's `TestCase`, with
+`check`, `check_eq` and `skip`).
+
+The game extends `NetCoreSession` for its constants and wording, sets its `NetAdapter` in
+`_init`, and uses that script as an autoload:
+
+```gdscript
+class_name NetSession
+extends NetCoreSession
+
+func _init() -> void:
+	adapter = MyGameAdapter.new()   # extends NetAdapter
+```
+
+Each tick the game calls `host_tick(bits)` on the host or `client_tick(bits)` on the client,
+plays `take_events()` on the client, and shows `away_state()` (`reconnecting`,
+`waiting_player`, `waiting_host`) while a game waits.
 
 ## Versions
 
@@ -35,8 +60,10 @@ A relay connection names three things in its query:
   doesn't speak with `relay_version`. None means 1.
 - `game`: the game's id. A room only pairs connections with the same id; another game's room
   answers `no_room`. None means "", which only matches "".
-- `protocol` and `content`: the game's session protocol and data digest, compared as opaque
-  strings. Different values are refused with `version`.
+- `protocol` and `content`: the session protocol (`"<NETCORE_PROTOCOL>.<game protocol>"`) and
+  the game's data digest, compared as opaque strings. Different values are refused with
+  `version`. `NetCoreSession.NETCORE_PROTOCOL` changes with the hello, input or snapshot
+  framing; the game bumps its own protocol when its sim or snapshot layout changes.
 
 Releases are tagged; `CHANGELOG.md` lists any protocol change.
 
