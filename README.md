@@ -33,6 +33,10 @@ git submodule add https://github.com/thesquib/netcore.git game/addons/netcore
 git config -f .gitmodules submodule.game/addons/netcore.ignore untracked   # relay/node_modules
 ```
 
+Node resolves the relay's own dependencies (`ws`, `wrangler`) from `relay/` here, so run
+`npm install` in `game/addons/netcore/relay` (a game's own relay package can do it in a
+`postinstall` script).
+
 Exclude `addons/netcore/tests/*` in the game's export presets, and have the game's test runner
 also run `res://addons/netcore/tests/test_*.gd` (they extend the game's `TestCase`, with
 `check`, `check_eq` and `skip`).

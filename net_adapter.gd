@@ -2,12 +2,19 @@ class_name NetAdapter
 extends RefCounted
 ## A game's side of NetCoreSession: its world, its snapshot layout, its slots and its tuning.
 ## Each game extends this and sets it as its session's `adapter`. The defaults suit a 30 Hz game
-## that sends every tick; a world is any object the game's hooks understand.
+## that sends every tick; a world is any object the game's hooks understand. NetCoreSession.world
+## is typed Object, so game code reading it annotates its variables (`var w: MyWorld = Net.world`).
 ##
 ## A snapshot is a Dictionary with at least "tick" (int, the world's tick count) and "events"
 ## (Array, what happened that tick: sounds, effects). body_of() turns the rest of it into the
 ## Dictionary that goes on the wire; its Variant bytes should keep the same layout from tick to
 ## tick, because deltas are those bytes XOR an earlier body.
+##
+## Laying out a body: anything whose size changes (lists that grow and shrink, strings) goes
+## last, because a size change shifts every byte after it and the XOR stops being mostly zeros.
+## Give things that come and go fixed slots (a pool, or a per-cell array) and store records as
+## columns of packed ints, so one entity appearing doesn't move the others. A badly laid out body
+## can make deltas larger than keyframes; measure both.
 
 
 ## The game's id on the relay: a room only pairs connections with the same id.

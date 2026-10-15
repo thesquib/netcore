@@ -4,7 +4,9 @@ Protocol numbers that a release changes are listed with it: the relay wire versi
 (`RelayPeer.RELAY_VERSION`, `relay/room.js` `RELAY_VERSIONS`) and the session protocol
 (`NetSession.NETCORE_PROTOCOL`).
 
-## Unreleased
+## 1.0.0
+
+Relay wire version 1, session protocol 1.
 
 - Relay: rooms take a game id (`game=`) and a relay wire version (`relay=`, 1). A connection
   without them is game "" and version 1, so older builds pair as before.
