@@ -33,6 +33,7 @@ var _token := ""           # our seat's rejoin token
 var _host := false
 var _status := MultiplayerPeer.CONNECTION_CONNECTING
 var _paired := false
+var _drop_client := false
 var _ever_open := false
 var _reconnecting := false
 var _retry_at := 0.0
@@ -162,6 +163,10 @@ func _control(text: String) -> void:
 		"resumed":
 			_reconnecting = false
 			_up()
+			if _drop_client:
+				_socket.send_text('{"type":"drop_client"}')
+				_drop_client = false
+				return
 			var partner: bool = m.get("paired", false)
 			if partner and not _paired:  # a host whose `paired` went to a dead socket
 				_paired = true
@@ -189,9 +194,11 @@ func _control(text: String) -> void:
 		"peer_left":
 			_inbox.clear()
 			if _host:
+				var was_paired := _paired
 				_paired = false
 				peer_up = true
-				peer_disconnected.emit(CLIENT_ID)
+				if was_paired:
+					peer_disconnected.emit(CLIENT_ID)
 			else:
 				_fail("host_left")
 		"error":
@@ -315,8 +322,18 @@ func poll_leave() -> bool:
 	return _leave_socket != null
 
 
-func _disconnect_peer(_peer: int, _force: bool) -> void:
-	_close()
+func _disconnect_peer(peer: int, _force: bool) -> void:
+	if not _host:
+		_close()
+	elif peer == CLIENT_ID:
+		_drop_client = true
+		if link_up and _socket.get_ready_state() == WebSocketPeer.STATE_OPEN:
+			_socket.send_text('{"type":"drop_client"}')
+			_drop_client = false
+		_inbox.clear()
+		if _paired:
+			_paired = false
+			peer_disconnected.emit(CLIENT_ID)
 
 
 func _is_refusing_new_connections() -> bool:

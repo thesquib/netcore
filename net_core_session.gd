@@ -39,9 +39,9 @@ signal room_ready(code: String)        # host on a relay: the relay gave us a ro
 ## if any, was dropped; the host plays on locally.
 signal room_ended(reason: String)
 
-## Bump when the hello/input/snapshot framing or the RPCs change. The session protocol a relay
-## compares is "<NETCORE_PROTOCOL>.<adapter.game_protocol()>".
-const NETCORE_PROTOCOL := 1
+## Bump when hello/input/snapshot framing or RPCs change. Both transports compare the combined
+## session protocol "<NETCORE_PROTOCOL>.<adapter.game_protocol()>".
+const NETCORE_PROTOCOL := 2
 ## Refuse to decompress snapshots bigger than this.
 const MAX_SNAPSHOT_BYTES := 1 << 20
 const BACKLOG_LIMIT := 16384     # bytes queued on the relay socket before snapshots are skipped
@@ -93,6 +93,7 @@ var _need_keyframe := false    # client: a delta didn't decode; ask for a keyfra
 var _input_seq := 0            # client
 var _last_tick := -1           # client: newest snapshot applied
 var _hello_at := 0.0
+var _content_digest := ""
 var _last_heard := 0.0     # host: the newest client input; client: the newest snapshot
 var _paused := false       # host: the world is waiting for the other player
 var _keepalive_at := 0.0
@@ -129,6 +130,7 @@ func host_game(port := -1) -> Error:
 	multiplayer.multiplayer_peer = peer
 	is_host = true
 	send_every = adapter.send_every_lan()
+	_content_digest = adapter.content_digest()
 	_watch(true)
 	return OK
 
@@ -142,6 +144,7 @@ func join_game(address: String, port := -1) -> Error:
 	multiplayer.multiplayer_peer = peer
 	is_host = false
 	send_every = adapter.send_every_lan()
+	_content_digest = adapter.content_digest()
 	_watch(true)
 	return OK
 
@@ -150,7 +153,8 @@ func join_game(address: String, port := -1) -> Error:
 ## `factory` makes sockets (tests pass FakeRelay.factory()); the default is WebSocketPeer.
 func host_relay(url: String, factory := Callable()) -> void:
 	close()
-	_use_relay(RelayPeer.create_host(url, adapter.game_id(), session_protocol(), adapter.content_digest(), factory))
+	_content_digest = adapter.content_digest()
+	_use_relay(RelayPeer.create_host(url, adapter.game_id(), session_protocol(), _content_digest, factory))
 	is_host = true
 
 
@@ -165,8 +169,9 @@ func host_relay_with(adopt: Object, url: String, factory := Callable()) -> void:
 ## Joins room `code` through the relay at `url`.
 func join_relay(url: String, code: String, factory := Callable()) -> void:
 	close()
+	_content_digest = adapter.content_digest()
 	_use_relay(RelayPeer.create_client(url, code.to_upper(), adapter.game_id(), session_protocol(),
-		adapter.content_digest(), factory))
+		_content_digest, factory))
 	is_host = false
 
 
@@ -234,7 +239,7 @@ func _predict(bits: int) -> void:
 
 
 ## Both players present: our link and theirs up on a relay, and the other side heard from
-## within SILENCE_S. The host only ticks the world while this holds.
+## within SILENCE_S. A paired host waits while this is false; an unpaired host can play alone.
 func together() -> bool:
 	var p := multiplayer.multiplayer_peer
 	if p is RelayPeer and (not p.link_up or not p.peer_up):
@@ -331,7 +336,7 @@ func _process(_delta: float) -> void:
 		var t := Time.get_ticks_msec() / 1000.0
 		if t >= _hello_at:  # until the first snapshot: an earlier hello may have been lost
 			_hello_at = t + HELLO_RETRY_S
-			_client_hello.rpc_id(1)
+			_client_hello.rpc_id(1, session_protocol(), _content_digest, adapter.game_id())
 
 
 ## A meta command from this computer's player: the host applies it to its world; a client
@@ -361,7 +366,10 @@ func host_tick(local_bits: int) -> void:
 		if clock.call() - _last_heard > GRACE_S:  # silent for the whole grace time: gone
 			var p := multiplayer.multiplayer_peer
 			var own_link_down: bool = p is RelayPeer and not p.link_up
+			var departed := remote_peer
 			remote_peer = 0
+			p.disconnect_peer(departed)
+			remote_inputs = new_input_queue()
 			_paused = false
 			drop_remote_player()
 			disconnected.emit("lost" if own_link_down else "player_left")
@@ -505,10 +513,12 @@ func restore_remote_player() -> void:
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func _client_hello() -> void:
+func _client_hello(protocol := "", content := "", game := "") -> void:
 	if not is_host or remote_peer != 0:
 		return
-	var refusal := adapter.accept_client(world) if world != null else ""
+	var refusal := "version" if protocol != session_protocol() or content != _content_digest or game != adapter.game_id() else ""
+	if refusal == "" and world != null:
+		refusal = adapter.accept_client(world)
 	if refusal != "":
 		_refused.rpc_id(multiplayer.get_remote_sender_id(), refusal)
 		return
@@ -526,13 +536,12 @@ func _client_hello() -> void:
 	connected.emit()
 
 
-## The host turned this client away (adapter.accept_client): leave, and say why.
+## Defers closing until SceneMultiplayer finishes dispatching the refusal.
 @rpc("authority", "call_remote", "reliable")
 func _refused(reason: String) -> void:
 	if is_host or _refused_reason != "":
 		return  # the hello repeats until answered, so a refusal can arrive twice
 	_refused_reason = reason
-	# Deferred, like _on_relay_error: this runs inside SceneMultiplayer's poll.
 	(func(): close(); _refused_reason = ""; disconnected.emit(reason)).call_deferred()
 
 
@@ -541,7 +550,10 @@ func _refused(reason: String) -> void:
 ## `base_tick`: the client's newest body to delta against (-1: send a keyframe).
 @rpc("any_peer", "call_remote", "unreliable_ordered")
 func _receive_inputs(first_seq: int, bits: PackedByteArray, base_tick: int, acked_tick: int) -> void:
-	if multiplayer.get_remote_sender_id() != remote_peer:
+	if not is_host or remote_peer == 0 or multiplayer.get_remote_sender_id() != remote_peer:
+		return
+	if bits.is_empty() or bits.size() > adapter.input_history() or first_seq < 0 \
+			or first_seq > 0x7fffffffffffffff - bits.size():
 		return
 	_last_heard = clock.call()
 	for i in bits.size():
@@ -573,7 +585,6 @@ func client_tick(local_bits: int) -> void:
 		_predict(bits)
 
 
-## Sends the newest inputs now.
 func flush_inputs() -> void:
 	if _sent.is_empty():
 		return
@@ -679,7 +690,7 @@ func _on_peer_disconnected(id: int) -> void:
 func _on_connected_to_server() -> void:
 	_connect_started = -1.0
 	_last_heard = clock.call()
-	_client_hello.rpc_id(1)
+	_client_hello.rpc_id(1, session_protocol(), _content_digest, adapter.game_id())
 	connected.emit()
 
 

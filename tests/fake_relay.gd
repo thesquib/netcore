@@ -91,8 +91,14 @@ func _send(from: FakeSocket, bytes: PackedByteArray) -> void:
 
 func _text(from: FakeSocket, text: String) -> void:
 	var m: Variant = JSON.parse_string(text)
-	if typeof(m) == TYPE_DICTIONARY and m.get("type") == "leave":
+	if typeof(m) != TYPE_DICTIONARY:
+		return
+	if m.get("type") == "leave":
 		_vacate(_seat_of(from))
+	elif m.get("type") == "drop_client" and not host.is_empty() and _seat_of(from) == host:
+		if not client.is_empty() and client["socket"]:
+			_refuse(client["socket"], "lost")
+		_vacate(client)
 
 
 func _closed(s: FakeSocket) -> void:

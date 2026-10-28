@@ -8,8 +8,8 @@ export const MAX_RATE = 120;            // messages per second per connection
 export const UNJOINED_MS = 10 * 60 * 1000;
 export const MAX_AGE_MS = 3 * 60 * 60 * 1000;
 export const GRACE_MS = 2 * 60 * 1000;  // a dropped seat waits this long for its owner
-// The relay wire versions this relay speaks (the room and control messages). A connection that
-// names none is version 1, so builds from before the version existed keep working.
+// Supported relay wire versions; an omitted version means 1. Host-requested client removal
+// uses the optional drop_client control message; older version-1 relays ignore it.
 export const RELAY_VERSIONS = ['1'];
 
 // A connection's version from its query: the relay wire version, the game id (a room only pairs
@@ -111,6 +111,11 @@ export class Room {
       let m = null;
       try { m = JSON.parse(data); } catch { /* not ours */ }
       if (m && m.type === 'leave') this.leave(conn, true);
+      if (m && m.type === 'drop_client' && role === 'host') {
+        const client = this.seats.client?.conn;
+        if (client) ctl(client, { type: 'error', reason: 'lost' });
+        this._vacate('client');
+      }
       return;
     }
     const other = this.seats[role === 'host' ? 'client' : 'host'];

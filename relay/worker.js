@@ -1,6 +1,6 @@
 // Cloudflare Worker + one Durable Object per room. The Worker routes /host to a fresh code's
 // object (retrying if the code is taken), and /join/<CODE> and /rejoin/<CODE> to that code's
-// object. The object uses the WebSocket Hibernation API, so an idle room costs nothing. Its
+// object. The object uses the WebSocket Hibernation API, so idle sockets can hibernate. Its
 // Room state lives in storage (while the host is away no socket holds it), and each socket's
 // attachment says which seat it is, so the Room is rebuilt when the object wakes.
 // A game adds HTTP routes of its own with plugins: makeWorker({ plugins: [{ fetch(request, env, ctx) }] })
@@ -8,40 +8,67 @@
 // every request before the relay's own routes. The game's entry module re-exports RoomObject
 // (and its plugins' Durable Object classes) for its wrangler.toml.
 import { DurableObject } from 'cloudflare:workers';
-import { Room, versionOf } from './room.js';
+import { Room, versionOf, MAX_AGE_MS } from './room.js';
 import { randomCode, normalise } from './codes.js';
 
 export function makeWorker({ plugins = [] } = {}) {
+  // Per-isolate limits; room reservations last the maximum room lifetime, even after early closes.
+  const hits = new Map(), rooms = new Map();
+  let swept = 0;
   return {
     async fetch(request, env, ctx) {
       for (const p of plugins) {
         const res = p.fetch && await p.fetch(request, env, ctx);
         if (res) return res;
       }
-      return relayFetch(request, env);
+      const now = Date.now();
+      if (now - swept >= 60000) {
+        for (const [key, times] of hits) if (!times.some(t => now - t < 60000)) hits.delete(key);
+        for (const [key, until] of rooms) if (now > until) rooms.delete(key);
+        swept = now;
+      }
+      return relayFetch(request, env, hits, rooms);
     },
   };
 }
 
 export default makeWorker();
 
-async function relayFetch(request, env) {
+async function relayFetch(request, env, hits, rooms) {
   if (request.headers.get('Upgrade') !== 'websocket') return new Response('WebSocket only\n', { status: 426 });
   const url = new URL(request.url);
   const parts = url.pathname.split('/').filter(Boolean);
-  if (parts.length === 1 && parts[0] === 'host') {
-    for (let i = 0; i < 8; i++) {
-      const code = randomCode();
-      const res = await stub(env, code).fetch(roomRequest(request, url, code, 'host'));
-      if (res.status !== 409) return res;  // 409: that code is in use, try another
+  const isHost = parts.length === 1 && parts[0] === 'host';
+  const isJoin = parts.length === 2 && (parts[0] === 'join' || parts[0] === 'rejoin');
+  if (!isHost && !isJoin) return new Response('not found\n', { status: 404 });
+  const now = Date.now();
+  const key = `${isHost ? 'host' : 'join'}:${request.headers.get('CF-Connecting-IP') || '?'}`;
+  const times = (hits.get(key) || []).filter(t => now - t < 60000);
+  hits.set(key, times);
+  if (times.length >= (isHost ? 30 : 120)) return new Response('limit\n', { status: 429 });
+  times.push(now);
+  if (isHost) {
+    if (rooms.size >= 2000) return new Response('busy\n', { status: 503 });
+    const reservation = Symbol();
+    rooms.set(reservation, now + MAX_AGE_MS);
+    let created = false;
+    try {
+      for (let i = 0; i < 8; i++) {
+        const code = randomCode();
+        const res = await stub(env, code).fetch(roomRequest(request, url, code, 'host'));
+        if (res.status !== 409) {
+          created = res.status === 101;
+          if (created) rooms.set(reservation, Date.now() + MAX_AGE_MS);
+          return res;
+        }
+      }
+      return new Response('busy\n', { status: 503 });
+    } finally {
+      if (!created) rooms.delete(reservation);
     }
-    return new Response('busy\n', { status: 503 });
   }
-  if (parts.length === 2 && (parts[0] === 'join' || parts[0] === 'rejoin')) {
-    const code = normalise(parts[1]) || '_';  // not a real code: an empty room answers no_room / no_seat
-    return stub(env, code).fetch(roomRequest(request, url, code, parts[0]));
-  }
-  return new Response('not found\n', { status: 404 });
+  const code = normalise(parts[1]) || '_';  // invalid codes reach an empty room
+  return stub(env, code).fetch(roomRequest(request, url, code, parts[0]));
 }
 
 function stub(env, code) {

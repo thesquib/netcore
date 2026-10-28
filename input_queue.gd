@@ -1,9 +1,9 @@
 class_name InputQueue
 extends RefCounted
 ## The host's queue of the remote player's inputs, by sequence number.
-## Packets carry the newest few inputs, so a lost packet costs nothing; each host tick applies the
-## next one in order, repeating the last when none is waiting, and skipping ahead when more than
-## max_behind are queued (after a freeze), so old steering isn't replayed for seconds. A queue
+## Packets carry the newest few inputs, so recent lost inputs can be recovered; each host tick applies the
+## next one in order, repeating the last when none is waiting. Receiving inputs keeps at most
+## max_behind + 1 entries; take() skips ahead to bound delay, so old steering isn't replayed for seconds. A queue
 ## that stays backed up for drain_ticks drops one input, so a burst can't leave a standing delay.
 ## An input is the game's input bits (masked by `mask`), one per tick.
 
@@ -28,6 +28,8 @@ func accept(seq: int, bits: int) -> bool:
 		return false
 	newest_seq = seq
 	_queue.append([seq, bits & mask])
+	if _queue.size() > max_behind + 1:
+		_queue = _queue.slice(_queue.size() - max_behind - 1)
 	return true
 
 
@@ -38,8 +40,8 @@ func skip_to_newest() -> void:
 
 ## The input bits for this tick.
 func take() -> int:
-	while _queue.size() > max_behind + 1:
-		_queue.pop_front()
+	if _queue.size() > max_behind + 1:
+		_queue = _queue.slice(_queue.size() - max_behind - 1)
 	if not _queue.is_empty():
 		var e: Array = _queue.pop_front()
 		applied_seq = e[0]

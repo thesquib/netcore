@@ -4,6 +4,13 @@ Protocol numbers that a release changes are listed with it: the relay wire versi
 (`RelayPeer.RELAY_VERSION`, `relay/room.js` `RELAY_VERSIONS`) and the session protocol
 (`NetSession.NETCORE_PROTOCOL`).
 
+## Unreleased
+
+Session protocol 2 checks game id, protocol and content in LAN hellos.
+Relay wire version 1 still: a host can send `drop_client` to vacate the client seat without
+closing the room (older relays ignore it, so the seat is only freed when the client leaves).
+Input histories and queues are bounded, and the Worker limits admission per isolate.
+
 ## 1.0.0
 
 Relay wire version 1, session protocol 1.

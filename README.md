@@ -68,6 +68,7 @@ A relay connection names three things in its query:
   the game's data digest, compared as opaque strings. Different values are refused with
   `version`. `NetCoreSession.NETCORE_PROTOCOL` changes with the hello, input or snapshot
   framing; the game bumps its own protocol when its sim or snapshot layout changes.
+  LAN hellos check the same game id, session protocol and content digest.
 
 Releases are tagged; `CHANGELOG.md` lists any protocol change.
 
@@ -82,8 +83,9 @@ npm start                     # ws://localhost:8790
 
 `startServer({ maxRooms, hostsPerMin, joinsPerMin, trustProxy, plugins })` caps open rooms and
 room creations and joins per IP. `--trust-proxy` reads the client address from
-`X-Forwarded-For`; use it only behind a proxy you control. On Cloudflare, add a rate limiting
-rule on the relay's hostname instead.
+`X-Forwarded-For`; use it only behind a proxy you control. The Worker limits each IP to 30
+host and 120 join/rejoin attempts per minute and reserves at most 2000 rooms per isolate.
+Reservations expire after the maximum room lifetime; these are not global limits.
 
 A game adds its own HTTP routes with plugins:
 

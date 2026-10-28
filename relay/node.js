@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws';
 import { Room, versionOf } from './room.js';
 import { randomCode, normalise } from './codes.js';
 
-// Limits (the wire protocol is unchanged; a refused connection gets an HTTP error at the upgrade):
+// Limits: a refused connection gets an HTTP error at the WebSocket upgrade.
 // maxRooms caps memory, hostsPerMin / joinsPerMin count per client IP over a sliding minute
 // (joinsPerMin covers join and rejoin). trustProxy reads the client IP from X-Forwarded-For,
 // only for a relay behind a proxy you control.

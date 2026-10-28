@@ -1,8 +1,8 @@
 class_name NetBrowser
 extends RefCounted
-## LAN discovery, joining side: listens on a UDP port for NetBeacon packets and keeps a list of
-## the hosts it has heard from recently. bytes_to_var never decodes objects, so stray packets
-## can't do harm; ones without the magic string are ignored.
+## LAN discovery, joining side: listens for NetBeacon UDP packets and keeps recent hosts.
+## bytes_to_var does not decode objects. Packets need the expected magic; names are converted
+## to strings and non-integer ports use the default. Games validate their own advertised fields.
 
 const EXPIRE_MS := 3500
 

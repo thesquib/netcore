@@ -14,15 +14,17 @@ class ToyWorld extends RefCounted:
 
 class ToyAdapter extends NetAdapter:
 	var refuse_when_over := "game_over"
+	var protocol := 7
+	var content := "abc"
 
 	func game_id() -> String:
 		return "toy"
 
 	func game_protocol() -> int:
-		return 7
+		return protocol
 
 	func content_digest() -> String:
-		return "abc"
+		return content
 
 	func new_world() -> Object:
 		return ToyWorld.new()
@@ -270,3 +272,54 @@ func test_input_queue_masks_and_repeats() -> void:
 		q.accept(s, s)
 	q.take()
 	check_eq(q.applied_seq, 11 - 3, "skipped to within max_behind")
+
+
+func test_lan_hello_refuses_different_protocol_or_content() -> void:
+	for mismatch in ["protocol", "content"]:
+		var sides := _sides(["VersionHost", "VersionClient"])
+		var host: NetCoreSession = sides[0]
+		var client: NetCoreSession = sides[1]
+		var reasons := []
+		client.disconnected.connect(func(r): reasons.append(r))
+		var client_adapter := client.adapter as ToyAdapter
+		if mismatch == "protocol":
+			client_adapter.protocol += 1
+		else:
+			client_adapter.content = "different"
+		check_eq(host.host_game(47882), OK, "host listening")
+		check_eq(client.join_game("127.0.0.1", 47882), OK, "client connecting")
+		for i in 200:
+			if not reasons.is_empty():
+				break
+			await _frame(1)
+		check_eq(reasons, ["version"], mismatch + " mismatch refused")
+		check_eq(host.remote_peer, 0, "incompatible client not accepted")
+		check(not client.is_online(), "incompatible client disconnected")
+		await _free(sides)
+
+
+func test_relay_host_can_vacate_a_client_after_its_own_reconnect() -> void:
+	var relay := FakeRelay.new()
+	var sides := await _paired(relay, ["DeferredDropHost", "DeferredDropClient", "DeferredReplacement"])
+	var host: NetCoreSession = sides[0]
+	var peer: RelayPeer = host.multiplayer.multiplayer_peer
+	peer.opens_fail_for_tests = true
+	peer.drop_link()
+	await _frame(3)
+	var later: float = host.clock.call() + NetCoreSession.GRACE_S + 1.0
+	host.clock = func(): return later
+	host.host_tick(0)
+	check_eq(host.remote_peer, 0, "client dropped while host offline")
+	peer.opens_fail_for_tests = false
+	peer._retry_at = 0.0
+	peer._socket.state = WebSocketPeer.STATE_CLOSED
+	await _frame(10)
+	check(relay.client.is_empty(), "reconnect delivered the pending seat removal")
+	check(not relay.host.is_empty(), "room stays hosted")
+	sides[2].join_relay("ws://fake", relay.code, relay.factory())
+	for i in 60:
+		if host.remote_peer != 0:
+			break
+		await _frame(1)
+	check(host.remote_peer != 0, "replacement accepted")
+	await _free(sides)

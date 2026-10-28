@@ -1,7 +1,7 @@
 class_name NetBeacon
 extends RefCounted
 ## LAN discovery, host side: once a second, broadcasts a small UDP packet announcing the game to
-## a UDP port (255.255.255.255, plus 127.0.0.1 so a second copy on the same machine sees it).
+## a UDP port (broadcast plus loopback, so a second copy on the same machine sees it).
 ## NetBrowser listens for these packets. Each game picks its own port and magic string, so
 ## different games can run on one LAN.
 

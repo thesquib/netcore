@@ -47,6 +47,24 @@ export function protocolSuite(makeTarget) {
     host.close(); client.close();
   });
 
+  test('only the host can vacate the client seat without ending the room', async () => {
+    const host = await t.connect('/host' + V + '&relay=1');
+    const { code } = await json(host);
+    const client = await t.connect(`/join/${code}` + V + '&relay=1');
+    assert.equal((await json(client)).type, 'paired');
+    assert.equal((await json(host)).type, 'paired');
+    client.send('{"type":"drop_client"}');
+    client.send(new Uint8Array([7]));
+    assert.deepEqual([...(await host.next()).binary], [7]);
+    host.send('{"type":"drop_client"}');
+    assert.equal((await json(host)).type, 'peer_left');
+    assert.deepEqual(await json(client), { type: 'error', reason: 'lost' });
+    const replacement = await t.connect(`/join/${code}` + V);
+    assert.equal((await json(replacement)).type, 'paired');
+    assert.equal((await json(host)).type, 'paired');
+    host.close(); replacement.close();
+  });
+
   test('a lower-case code still joins', async () => {
     const host = await t.connect('/host' + V);
     const { code } = await json(host);
